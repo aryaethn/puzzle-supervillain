@@ -76,12 +76,43 @@ fn main() {
         .for_each(|(i, (pk, proof))| pok_verify(*pk, i, *proof));
 
     let new_key_index = public_keys.len();
-    let message = b"YOUR GITHUB USERNAME";
+    let message = b"aryaethn";
 
     /* Enter solution here */
 
-    let new_key = G1Affine::zero();
-    let new_proof = G2Affine::zero();
+    // Rogue key attack: Create a malicious key that cancels all existing keys
+    
+    // Step 1: Compute new_key = -Σ(pk_i)
+    // This will make the aggregate key equal to zero
+    let sum_of_pks = public_keys
+        .iter()
+        .fold(G1Projective::zero(), |acc, (pk, _)| acc + pk);
+    let new_key = sum_of_pks.neg().into_affine();
+    
+    // Step 2: Exploit malleability to create a valid PoP without knowing the secret key
+    // For index i, PoP verifies: e(pk_i, (i+1)*G2) = e(G1, proof_i)
+    // For our new key at index n: e(new_key, (n+1)*G2) = e(G1, new_proof)
+    // Since new_key = -Σ(pk_i), we have:
+    // e(-Σ(pk_i), (n+1)*G2) = e(G1, new_proof)
+    // = Π e(pk_i, G2)^(-(n+1))
+    // = Π e(G1, proof_i/(i+1))^(-(n+1))
+    // = e(G1, Σ(-(n+1)/(i+1) * proof_i))
+    // Therefore: new_proof = Σ(-(n+1)/(i+1) * proof_i)
+    
+    let n = new_key_index as u64;
+    let new_proof = public_keys
+        .iter()
+        .enumerate()
+        .fold(G2Projective::zero(), |acc, (i, (_, proof))| {
+            let i_plus_1 = Fr::from((i as u64) + 1);
+            let n_plus_1 = Fr::from(n + 1);
+            let coefficient = -(n_plus_1 / i_plus_1); // -(n+1)/(i+1)
+            acc + proof.mul(coefficient)
+        })
+        .into_affine();
+    
+    // Step 3: Since aggregate_key = new_key + Σ(pk_i) = 0,
+    // any signature on the zero point is valid, which is just zero!
     let aggregate_signature = G2Affine::zero();
 
     /* End of solution */
@@ -91,7 +122,8 @@ fn main() {
         .iter()
         .fold(G1Projective::from(new_key), |acc, (pk, _)| acc + pk)
         .into_affine();
-    bls_verify(aggregate_key, aggregate_signature, message)
+    bls_verify(aggregate_key, aggregate_signature, message);
+    println!("Puzzle Solved!✅");
 }
 
 const PUZZLE_DESCRIPTION: &str = r"
